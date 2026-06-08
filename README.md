@@ -30,7 +30,8 @@ Risk levels are color coded:
 ---
 
 ## Architecture
-Copernicus Satellite (every 5 days) -> AWS EventBridge (scheduled trigger) -> AWS Lambda (pipeline orchestration) ->SageMaker Processing Job (process.py) -> U-Net CV Model + Risk Scoring -> Amazon DynamoDB (risk scores) -> API Gateway REST API -> CloudFront + S3 (live map)
+<img width="852" height="1058" alt="image" src="https://github.com/user-attachments/assets/26c8861a-e145-4f19-9737-0a36a6b5323f" />
+
 ---
 
 ## AWS Services
