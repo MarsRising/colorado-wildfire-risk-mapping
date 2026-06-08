@@ -119,6 +119,7 @@ The system runs fully automatically every 5 days:
 ## Project Structure
 
 colorado-wildfire-risk-mapping/
+
 ├── src/
 
 │   ├── lambda/
