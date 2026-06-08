@@ -30,21 +30,7 @@ Risk levels are color coded:
 ---
 
 ## Architecture
-Copernicus Satellite (every 5 days)
-↓
-AWS EventBridge (scheduled trigger)
-↓
-AWS Lambda (pipeline orchestration)
-↓
-SageMaker Processing Job (process.py)
-↓
-U-Net CV Model + Risk Scoring
-↓
-Amazon DynamoDB (risk scores)
-↓
-API Gateway REST API
-↓
-CloudFront + S3 (live map)
+Copernicus Satellite (every 5 days) -> AWS EventBridge (scheduled trigger) -> AWS Lambda (pipeline orchestration) ->SageMaker Processing Job (process.py) -> U-Net CV Model + Risk Scoring -> Amazon DynamoDB (risk scores) -> API Gateway REST API -> CloudFront + S3 (live map)
 ---
 
 ## AWS Services
@@ -74,13 +60,18 @@ CloudFront + S3 (live map)
 
 ### Model Versions
 | Version | Training Data | Val Loss | Pixel Accuracy |
+
 | V2 | 1,764 NASA FIRMS auto-labeled tiles | 0.2324 | **95.3%** |
 
 ### Model Metrics (V2)
 - **Pixel Accuracy:** 95.3%
+  
 - **Precision:** 63.2%
+
 - **Recall:** 35.1%
+
 - **F1 Score:** 0.451
+
 - **IoU Score:** 0.291
 
 ---
@@ -129,18 +120,31 @@ The system runs fully automatically every 5 days:
 
 colorado-wildfire-risk-mapping/
 ├── src/
+
 │   ├── lambda/
+
 │   │   ├── wildfire_preprocessor.py    # Pipeline orchestration
+
 │   │   └── wildfire_api_handler.py     # API Gateway handler
+
 │   ├── processing/
+
 │   │   └── process.py                  # SageMaker processing script
+
 │   └── notebooks/
+
 │       ├── phase1_exploration.ipynb    # Data exploration
+
 │       ├── phase3_v2.ipynb            # Model training
+
 │       └── phase4_risk_scoring.ipynb  # Risk scoring pipeline
+
 ├── map/
+
 │   └── index.html                      # Interactive map frontend
+
 └── docs/
+
 └── architecture.png                # System architecture diagram
 
 
