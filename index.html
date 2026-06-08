@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Colorado Wildfire Risk Map</title>
+    
+    <!-- Leaflet.js -->
+    <link rel="stylesheet" 
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script 
+        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+    </script>
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 
+                'Segoe UI', sans-serif;
+            background: #0a0a0a;
+            color: #ffffff;
+        }
+        
+        #header {
+            background: linear-gradient(
+                135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%
+            );
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #ffffff20;
+            z-index: 1000;
+            position: relative;
+        }
+        
+        #header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+        
+        #header h1 span {
+            color: #ff6b35;
+        }
+        
+        #header p {
+            font-size: 12px;
+            color: #aaaaaa;
+            margin-top: 2px;
+        }
+        
+        #stats-bar {
+            background: #111111;
+            padding: 10px 24px;
+            display: flex;
+            gap: 32px;
+            border-bottom: 1px solid #ffffff15;
+        }
+        
+        .stat {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .stat-label {
+            font-size: 10px;
+            color: #888888;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        
+        .stat-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+        
+        .stat-value.critical { color: #ff2d2d; }
+        .stat-value.high { color: #ff6b35; }
+        .stat-value.moderate { color: #ffd700; }
+        .stat-value.low { color: #00c851; }
+        
+        #map {
+            height: calc(100vh - 120px);
+            width: 100%;
+        }
+        
+        #legend {
+            position: absolute;
+            bottom: 32px;
+            right: 16px;
+            background: rgba(10, 10, 10, 0.92);
+            border: 1px solid #ffffff20;
+            border-radius: 8px;
+            padding: 14px 18px;
+            z-index: 1000;
+            min-width: 180px;
+        }
+        
+        #legend h3 {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #aaaaaa;
+            margin-bottom: 10px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 7px;
+            font-size: 13px;
+        }
+        
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            flex-shrink: 0;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(10, 10, 10, 0.95);
+            border: 1px solid #ffffff20;
+            border-radius: 12px;
+            padding: 32px 48px;
+            text-align: center;
+            z-index: 2000;
+        }
+        
+        #loading h2 {
+            font-size: 16px;
+            color: #ffffff;
+            margin-bottom: 8px;
+        }
+        
+        #loading p {
+            font-size: 13px;
+            color: #888888;
+        }
+        
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid #ffffff20;
+            border-top: 3px solid #ff6b35;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        
+        .city-label {
+            background: rgba(0,0,0,0.75) !important;
+            border: 1px solid rgba(255,255,255,0.4) !important;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.5) !important;
+            color: #ffffff !important;
+            font-size: 11px !important;
+            font-weight: 700 !important;
+            padding: 2px 6px !important;
+            border-radius: 4px !important;
+            white-space: nowrap !important;
+            z-index: 9999 !important;
+            pointer-events: none !important;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .leaflet-popup-content-wrapper {
+            background: #1a1a1a;
+            border: 1px solid #ffffff20;
+            border-radius: 8px;
+            color: #ffffff;
+        }
+        
+        .leaflet-popup-tip {
+            background: #1a1a1a;
+        }
+        
+        .popup-title {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #ffffff;
+        }
+        
+        .popup-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            margin-bottom: 4px;
+            gap: 16px;
+        }
+        
+        .popup-label { color: #888888; }
+        .popup-value { color: #ffffff; font-weight: 500; }
+        
+        .risk-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        .badge-CRITICAL { 
+            background: #ff2d2d30; 
+            color: #ff2d2d; 
+        }
+        .badge-HIGH { 
+            background: #ff6b3530; 
+            color: #ff6b35; 
+        }
+        .badge-MODERATE { 
+            background: #ffd70030; 
+            color: #ffd700; 
+        }
+        .badge-LOW { 
+            background: #00c85130; 
+            color: #00c851; 
+        }
+        
+        #last-updated {
+            position: absolute;
+            bottom: 32px;
+            left: 16px;
+            background: rgba(10, 10, 10, 0.85);
+            border: 1px solid #ffffff15;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 11px;
+            color: #888888;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+
+<div id="header">
+    <div>
+        <h1>🔥 Colorado <span>Wildfire Risk</span> Map</h1>
+        <p>Real-time risk scoring powered by Sentinel-2 
+            satellite imagery and NASA fire detection data</p>
+    </div>
+    <div style="text-align:right">
+        <div style="font-size:11px;color:#888">Powered by</div>
+        <div style="font-size:12px;color:#aaa">
+            AWS SageMaker · U-Net CV Model · NASA FIRMS
+        </div>
+    </div>
+</div>
+
+<div id="stats-bar">
+    <div class="stat">
+        <span class="stat-label">Total Grid Cells</span>
+        <span class="stat-value" id="stat-total">--</span>
+    </div>
+    <div class="stat">
+        <span class="stat-label">Critical Risk</span>
+        <span class="stat-value critical" 
+            id="stat-critical">--</span>
+    </div>
+    <div class="stat">
+        <span class="stat-label">High Risk</span>
+        <span class="stat-value high" id="stat-high">--</span>
+    </div>
+    <div class="stat">
+        <span class="stat-label">Moderate Risk</span>
+        <span class="stat-value moderate" 
+            id="stat-moderate">--</span>
+    </div>
+    <div class="stat">
+        <span class="stat-label">Low Risk</span>
+        <span class="stat-value low" id="stat-low">--</span>
+    </div>
+    <div class="stat">
+        <span class="stat-label">Avg Risk Score</span>
+        <span class="stat-value" id="stat-avg">--</span>
+    </div>
+</div>
+
+<div id="loading">
+    <div class="spinner"></div>
+    <h2>Loading Risk Data</h2>
+    <p>Fetching satellite-derived risk scores...</p>
+</div>
+
+<div id="map"></div>
+
+<div id="legend">
+    <h3>Risk Level</h3>
+    <div class="legend-item">
+        <div class="legend-color" 
+            style="background:#ff2d2d"></div>
+        <span>Critical (75-100)</span>
+    </div>
+    <div class="legend-item">
+        <div class="legend-color" 
+            style="background:#ff6b35"></div>
+        <span>High (50-74)</span>
+    </div>
+    <div class="legend-item">
+        <div class="legend-color" 
+            style="background:#ffd700"></div>
+        <span>Moderate (25-49)</span>
+    </div>
+    <div class="legend-item">
+        <div class="legend-color" 
+            style="background:#00c851"></div>
+        <span>Low (0-24)</span>
+    </div>
+    <div style="margin-top:12px;padding-top:10px;
+        border-top:1px solid #ffffff15;font-size:11px;
+        color:#666">
+        Each cell ≈ 2.5km × 2.5km
+    </div>
+</div>
+
+<div id="last-updated">
+    Updated: <span id="update-time">--</span>
+</div>
+
+<script>
+    // Initialize map centered on Cameron Peak Fire area
+    const map = L.map('map').setView([40.6, -105.5], 7);
+    
+    // Dark map tiles
+    L.tileLayer(
+        'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        {
+            attribution: '© OpenStreetMap © CARTO',
+            maxZoom: 18
+        }
+    ).addTo(map);
+    
+    // Color mapping
+    function getRiskColor(score) {
+        if (score >= 75) return '#ff2d2d';
+        if (score >= 50) return '#ff6b35';
+        if (score >= 25) return '#ffd700';
+        return '#00c851';
+    }
+    
+    function getRiskOpacity(score) {
+        return 0.3 + (score / 100) * 0.5;
+    }
+    
+    // Convert grid cell ID to lat/lon
+    // Handles both T13TDF and T13TDE tiles
+    function gridToLatLon(gridCellId) {
+        const parts = gridCellId.split('_');
+        const tile = parts[0]; // T13TDF or T13TDE
+        const row = parseInt(parts[1]);
+        const col = parseInt(parts[2]);
+        
+        const imgHeight = 10980;
+        const imgWidth = 10980;
+        
+        let topLat, leftLon, bottomLat, rightLon;
+        
+        if (tile === 'T13TDE') { // Denver area
+            // Denver/Estes Park area
+            topLat = 40.6448;
+            leftLon = -106.1832;
+            bottomLat = 39.6616;
+            rightLon = -104.8862;
+        } else {
+            // Default T13TDF - Northern Colorado
+            topLat = 41.5456;
+            leftLon = -106.1994;
+            bottomLat = 40.5627;
+            rightLon = -104.8847;
+        }
+        
+        const lat = topLat - (row / imgHeight) * (topLat - bottomLat);
+        const lon = leftLon + (col / imgWidth) * (rightLon - leftLon);
+        
+        return [lat, lon];
+    }
+    
+    // Fetch and display risk scores
+    async function loadRiskData() {
+        try {
+            const response = await fetch('https://ag2vdq7k5b.execute-api.us-west-2.amazonaws.com/prod/risk-scores');
+            const data = await response.json();
+            
+            // Hide loading
+            document.getElementById('loading').style.display = 'none';
+            
+            const parsed = typeof data.body === 'string' ? JSON.parse(data.body) : data;
+            const scores = parsed.risk_scores || data.risk_scores;
+            
+            // Update stats
+            const total = scores.length;
+            const critical = scores.filter(
+                s => s.risk_level === 'CRITICAL'
+            ).length;
+            const high = scores.filter(
+                s => s.risk_level === 'HIGH'
+            ).length;
+            const moderate = scores.filter(
+                s => s.risk_level === 'MODERATE'
+            ).length;
+            const low = scores.filter(
+                s => s.risk_level === 'LOW'
+            ).length;
+            const avg = (
+                scores.reduce((sum, s) => sum + s.risk_score, 0) / total
+            ).toFixed(1);
+            
+            document.getElementById('stat-total').textContent = total;
+            document.getElementById('stat-critical').textContent = critical;
+            document.getElementById('stat-high').textContent = high;
+            document.getElementById('stat-moderate').textContent = moderate;
+            document.getElementById('stat-low').textContent = low;
+            document.getElementById('stat-avg').textContent = avg;
+            
+            // Plot each grid cell on map
+            scores.forEach(cell => {
+                const latLon = gridToLatLon(cell.grid_cell_id);
+                const color = getRiskColor(cell.risk_score);
+                const opacity = getRiskOpacity(cell.risk_score);
+                
+                // Create rectangle for each grid cell
+                const rect = L.rectangle(
+                    [
+                        [latLon[0], latLon[1]],
+                        [latLon[0] - 0.023, latLon[1] + 0.023]
+                    ],
+                    {
+                        color: color,
+                        weight: 1,
+                        fillColor: color,
+                        fillOpacity: opacity,
+                        opacity: 0.6
+                    }
+                ).addTo(map);
+                
+                // Popup with details
+                const ndvi = parseFloat(
+                    cell.ndvi_current
+                ).toFixed(3);
+                const burnProb = (
+                    parseFloat(cell.burn_probability) * 100
+                ).toFixed(1);
+                const timestamp = new Date(
+                    cell.timestamp
+                ).toLocaleDateString();
+                
+                rect.bindPopup(`
+                    <div class="popup-title">
+                        Grid Cell: ${cell.grid_cell_id}
+                    </div>
+                    <div class="popup-row">
+                        <span class="popup-label">Risk Score</span>
+                        <span class="popup-value">
+                            ${cell.risk_score}/100
+                        </span>
+                    </div>
+                    <div class="popup-row">
+                        <span class="popup-label">Risk Level</span>
+                        <span class="risk-badge 
+                            badge-${cell.risk_level}">
+                            ${cell.risk_level}
+                        </span>
+                    </div>
+                    <div class="popup-row">
+                        <span class="popup-label">
+                            Burn Probability
+                        </span>
+                        <span class="popup-value">
+                            ${burnProb}%
+                        </span>
+                    </div>
+                    <div class="popup-row">
+                        <span class="popup-label">
+                            NDVI (Vegetation)
+                        </span>
+                        <span class="popup-value">${ndvi}</span>
+                    </div>
+                    <div class="popup-row">
+                        <span class="popup-label">Model</span>
+                        <span class="popup-value">
+                            ${cell.model_version}
+                        </span>
+                    </div>
+                    <div class="popup-row">
+                        <span class="popup-label">Updated</span>
+                        <span class="popup-value">
+                            ${timestamp}
+                        </span>
+                    </div>
+                `);
+                
+                // Highlight on hover
+                rect.on('mouseover', function() {
+                    this.setStyle({ weight: 2, fillOpacity: 0.8 });
+                });
+                rect.on('mouseout', function() {
+                    this.setStyle({ 
+                        weight: 1, 
+                        fillOpacity: opacity 
+                    });
+                });
+            });
+            
+            // Update timestamp
+            document.getElementById('update-time').textContent = 
+                new Date().toLocaleString();
+
+            // Create high z-index pane for city labels
+    map.createPane('cityPane');
+    map.getPane('cityPane').style.zIndex = 9999;
+    map.getPane('cityPane').style.pointerEvents = 'none';
+
+    // Add city markers ON TOP of risk grid
+            const cities = [
+                { name: 'Fort Collins', lat: 40.5853, lon: -105.0844 },
+                { name: 'Boulder', lat: 40.0150, lon: -105.2705 },
+                { name: 'Denver', lat: 39.7392, lon: -104.9903 },
+                { name: 'Lakewood', lat: 39.7047, lon: -105.0814 },
+                { name: 'Estes Park', lat: 40.3772, lon: -105.5217 },
+                { name: 'Loveland', lat: 40.3978, lon: -105.0749 },
+                { name: 'Greeley', lat: 40.4233, lon: -104.7091 },
+                { name: 'Golden', lat: 39.7555, lon: -105.2211 },
+                { name: 'Idaho Springs', lat: 39.7430, lon: -105.5130 },
+                { name: 'Cameron Peak', lat: 40.5600, lon: -105.6500 },
+            ];
+
+            cities.forEach(city => {
+                const marker = L.circleMarker(
+                    [city.lat, city.lon],
+                    {
+                        radius: 6,
+                        fillColor: '#ffffff',
+                        color: '#000000',
+                        weight: 2,
+                        fillOpacity: 1.0,
+                        opacity: 1,
+                        pane: 'cityPane'
+                    }
+                ).addTo(map);
+
+                const tooltip = L.tooltip({
+                    permanent: true,
+                    direction: 'right',
+                    className: 'city-label',
+                    offset: [8, 0],
+                    pane: 'cityPane'
+                })
+                .setContent(city.name)
+                .setLatLng([city.lat, city.lon])
+                .addTo(map);
+            });
+                
+        } catch(error) {
+            document.getElementById('loading').innerHTML = `
+                <h2 style="color:#ff6b35">Error Loading Data</h2>
+                <p>${error.message}</p>
+            `;
+        }
+    }
+    
+    loadRiskData();
+</script>
+</body>
+</html>
