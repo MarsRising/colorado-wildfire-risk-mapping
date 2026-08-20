@@ -18,14 +18,21 @@ def get_copernicus_token():
         SecretId='wildfire/copernicus-credentials'
     )
     creds = json.loads(secret['SecretString'])
-    
+
+    # Copernicus's OData download endpoint only accepts tokens issued
+    # via the password grant (personal account), not client_credentials
+    # service-account tokens — confirmed by Copernicus support:
+    # "OAuth2 Authentication is not currently supported for downloading
+    # products using OData API." client_credentials still works fine
+    # for the STAC catalog search, just not for downloads.
     from urllib.parse import urlencode
     encoded_data = urlencode({
-        'grant_type': 'client_credentials',
-        'client_id': creds['client_id'],
-        'client_secret': creds['client_secret']
+        'grant_type': 'password',
+        'client_id': 'cdse-public',
+        'username': creds['username'],
+        'password': creds['password']
     }).encode('utf-8')
-    
+
     response = http.request(
         'POST',
         'https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token',
@@ -34,7 +41,7 @@ def get_copernicus_token():
             'Content-Type': 'application/x-www-form-urlencoded'
         }
     )
-    
+
     if response.status == 200:
         return json.loads(response.data)['access_token']
     else:
@@ -48,23 +55,30 @@ def search_sentinel2(token, tile_name, days_back=15):
     start_date = (
         datetime.now() - timedelta(days=days_back)
     ).strftime('%Y-%m-%d')
-    
+
     tile_bounds = {
         'T13TDF': [-106.20, 40.56, -104.88, 41.55],
         'T13TDE': [-106.18, 39.66, -104.89, 40.65]
     }
-    
+
     bounds = tile_bounds[tile_name]
     tile_code = tile_name[1:]
-    
+
+    # Only filter by cloud cover here (confirmed valid queryable).
+    # Tile matching is done client-side below instead of relying on
+    # an unverified 's2:mgrs_tile' / 'grid:code' filter format, since
+    # Sentinel-2 product IDs always embed the tile code directly.
     search_body = json.dumps({
-        'collections': ['SENTINEL-2'],
+        'collections': ['sentinel-2-l2a'],
         'bbox': bounds,
         'datetime': f'{start_date}T00:00:00Z/{end_date}T23:59:59Z',
-        'limit': 10,
-        'filter': f'eo:cloud_cover < 20 AND s2:mgrs_tile = "{tile_code}"'
+        'limit': 30,
+        'filter-lang': 'cql2-json',
+        'filter': {
+            'op': '<', 'args': [{'property': 'eo:cloud_cover'}, 20]
+        }
     }).encode('utf-8')
-    
+
     response = http.request(
         'POST',
         'https://catalogue.dataspace.copernicus.eu/stac/v1/search',
@@ -74,66 +88,106 @@ def search_sentinel2(token, tile_name, days_back=15):
             'Content-Type': 'application/json'
         }
     )
-    
+
     if response.status == 200:
         features = json.loads(
             response.data
         ).get('features', [])
-        if features:
-            return features[0]
-    
+        print(f"Search returned {len(features)} feature(s) for {tile_name} bbox")
+
+        # Filter down to items whose product ID actually matches this
+        # tile (bbox search can return neighboring/overlapping tiles too)
+        matching = [
+            f for f in features
+            if f'_T{tile_code}_' in f.get('id', '')
+        ]
+        print(f"{len(matching)} feature(s) match tile T{tile_code}")
+
+        if matching:
+            # Most recent first
+            matching.sort(
+                key=lambda f: f.get('properties', {}).get('datetime', ''),
+                reverse=True
+            )
+            return matching[0]
+    else:
+        # Log the real reason the search failed instead of
+        # silently falling back with no explanation
+        print(
+            f"Sentinel-2 search failed for {tile_name}: "
+            f"status={response.status} body={response.data[:500]}"
+        )
+
     return None
 
 def download_band(token, scene, band, local_path):
     """Download a specific band from a Sentinel-2 scene"""
     assets = scene.get('assets', {})
-    
+
     band_key = None
     for key in assets:
         if band in key and '10m' in key.lower():
             band_key = key
             break
-    
+
     if not band_key:
         print(f"Band {band} not found in assets")
         return False
-    
-    download_url = assets[band_key].get('href', '')
-    
+
+    # Prefer the HTTPS alternate — the default 'href' is an s3:// URL
+    # that urllib3 can't fetch directly (needs S3 credentials, not a
+    # bearer token). The 'alternate.https.href' uses the same OIDC
+    # bearer token we already have.
+    download_url = (
+        assets[band_key]
+        .get('alternate', {})
+        .get('https', {})
+        .get('href', '')
+    ) or assets[band_key].get('href', '')
+
     if not download_url:
+        print(f"No download URL found for {band_key}")
         return False
-    
+
     response = http.request(
         'GET',
         download_url,
         headers={'Authorization': f'Bearer {token}'},
         preload_content=False
     )
-    
+
     if response.status == 200:
         with open(local_path, 'wb') as f:
             for chunk in response.stream(8192):
                 f.write(chunk)
         response.release_conn()
         return True
-    
+    else:
+        # Log the real reason instead of silently falling back
+        body_preview = response.data[:300] if response.data else b''
+        print(
+            f"Download failed for {band_key}: status={response.status} "
+            f"url={download_url[:150]} body={body_preview}"
+        )
+        response.release_conn()
+
     return False
 
 def lambda_handler(event, context):
     print(f"Pipeline triggered: {datetime.now().isoformat()}")
-    
+
     tiles = ['T13TDF', 'T13TDE']
     jobs_started = []
-    
+
     try:
         # Get Copernicus token
         print("Getting Copernicus token...")
         token = get_copernicus_token()
         print("Token obtained!")
-        
+
         for tile_name in tiles:
             print(f"\nProcessing {tile_name}...")
-            
+
             # Default fallback S3 keys
             if tile_name == 'T13TDF':
                 b04_key = 'raw/sentinel2/post-fire/T13TDF_20201122T175651_B04_10m.jp2'
@@ -141,35 +195,35 @@ def lambda_handler(event, context):
             else:
                 b04_key = 'raw/sentinel2/post-fire/T13TDE_20201122T175651_B04_10m.jp2'
                 b08_key = 'raw/sentinel2/post-fire/T13TDE_20201122T175651_B08_10m.jp2'
-            
+
             # Search for latest scene
             print(f"Searching for latest {tile_name} scene...")
             scene = search_sentinel2(token, tile_name, days_back=15)
-            
+
             if scene:
                 scene_date = scene['properties'][
                     'datetime'
                 ][:10].replace('-', '')
                 print(f"Found scene: {scene_date}")
-                
+
                 b04_path = f'/tmp/{tile_name}_B04.jp2'
                 b08_path = f'/tmp/{tile_name}_B08.jp2'
-                
+
                 print(f"Downloading B04...")
                 b04_ok = download_band(
                     token, scene, 'B04', b04_path
                 )
-                
+
                 print(f"Downloading B08...")
                 b08_ok = download_band(
                     token, scene, 'B08', b08_path
                 )
-                
+
                 if b04_ok and b08_ok:
                     # Upload fresh imagery to S3
                     b04_key = f'raw/sentinel2/current/{tile_name}_{scene_date}_B04_10m.jp2'
                     b08_key = f'raw/sentinel2/current/{tile_name}_{scene_date}_B08_10m.jp2'
-                    
+
                     s3.upload_file(
                         b04_path, BUCKET, b04_key
                     )
@@ -181,11 +235,11 @@ def lambda_handler(event, context):
                     print(f"Download failed — using fallback S3 imagery")
             else:
                 print(f"No recent scene found — using fallback S3 imagery")
-            
+
             # Start SageMaker Processing Job
             timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
             job_name = f'wildfire-{tile_name.lower()}-{timestamp}'
-            
+
             try:
                 sagemaker.create_processing_job(
                     ProcessingJobName=job_name,
@@ -246,20 +300,20 @@ def lambda_handler(event, context):
                     },
                     RoleArn=ROLE_ARN
                 )
-                
+
                 jobs_started.append(job_name)
                 print(f"Started job: {job_name}")
-                
+
             except Exception as e:
                 print(f"Error starting job for {tile_name}: {e}")
-    
+
     except Exception as e:
         print(f"Pipeline error: {e}")
         return {
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
-    
+
     return {
         'statusCode': 200,
         'body': json.dumps({
