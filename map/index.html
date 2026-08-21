@@ -246,7 +246,7 @@
 <div id="header">
     <div>
         <h1>🔥 Colorado <span>Wildfire Risk</span> Map</h1>
-        <p>Real-time risk scoring powered by Sentinel-2 
+        <p>Automated risk scoring powered by Sentinel-2
             satellite imagery and NASA fire detection data</p>
     </div>
     <div style="text-align:right">
@@ -324,7 +324,7 @@
 </div>
 
 <div id="last-updated">
-    Updated: <span id="update-time">--</span>
+    Last updated: <span id="update-time">--</span>
 </div>
 
 <script>
@@ -511,9 +511,16 @@
                 });
             });
             
-            // Update timestamp
-            document.getElementById('update-time').textContent = 
-                new Date().toLocaleString();
+            // Update timestamp — show the most recent data timestamp
+            // from the pipeline itself, not the time the page loaded
+            const latestTimestamp = scores.reduce((latest, s) => {
+                return (!latest || s.timestamp > latest)
+                    ? s.timestamp : latest;
+            }, null);
+            document.getElementById('update-time').textContent =
+                latestTimestamp
+                    ? new Date(latestTimestamp).toLocaleString()
+                    : 'unknown';
 
             // Create high z-index pane for city labels
     map.createPane('cityPane');
